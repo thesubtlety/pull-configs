@@ -1,0 +1,75 @@
+#!/usr/bin/env expect -f
+
+# Uncomment to debug. Note that your password will be displayed on screen with enabled.
+# exp_internal 1
+
+set USER $env(USER)
+set DEVICE [ lindex $argv 0 ]
+set PASSWORD [ lindex $argv 1 ]
+set DATE [ lindex $argv 2 ]
+set NOW [ exec  date ]
+set PROMPT "($DEVICE) #"
+set RUNNING_CONFIG_FILE ./$DEVICE-$DATE.txt
+
+set ERROR_LOG ./error_log-$DATE.txt
+
+spawn ssh $USER@$DEVICE
+		
+expect {
+	"Could not resolve" {  
+		exp_send_user "Error resolving $DEVICE - skipping\n"
+		set ERRFD [open $ERROR_LOG a+]
+		puts $ERRFD "$NOW - Could not resolve $DEVICE."
+		close $ERRFD
+		exit 1;
+	}
+	
+	"password:" { 
+		exp_send "$PASSWORD\n" 
+	}
+	
+	"you sure you want to continue connecting (yes/no)?" { 
+		set FID [open $RUNNING_CONFIG_FILE w+]
+		exp_send "yes\n"
+		exp_continue
+	}
+	
+	default  { 
+		exp_send_user stderr "Something broke. Exiting"
+		exit 3;
+	}
+}
+
+expect {	
+	"Permission denied" {
+		exp_send_user "\nPermission denied. Incorrect password? Run this script again. \n"
+		set ERRFD [open $ERROR_LOG a+]
+		puts $ERRFD "$NOW - $DEVICE - Permission denied."
+		close $ERRFD
+		exit 3;
+	}
+}
+
+expect "#"
+exp_send "no paging\n"
+expect "#"
+exp_send "show running-config\n"
+
+# Config is very long, full of newlines etc, and fills multiple buffers
+# Best to just log output. Note this will capture the paging and exit commands
+log_file $RUNNING_CONFIG_FILE
+
+expect {
+		"end\r\r\n($PROMPT) #" {
+			exp_continue
+		}
+}
+
+expect {
+		"$PROMPT" {
+			exp_send "paging\n"
+			exp_send "exit\n"
+		}
+}
+
+exit
